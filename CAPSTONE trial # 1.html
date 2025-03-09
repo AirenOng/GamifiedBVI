@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Accessible Navigation</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #000;
+            color: #fff;
+            text-align: center;
+            font-size: 1.5em;
+        }
+        button {
+            padding: 15px 30px;
+            font-size: 1.2em;
+            margin: 20px;
+            cursor: pointer;
+            background-color: #ffcc00;
+            border: none;
+            border-radius: 5px;
+            color: black;
+        }
+        button:focus {
+            outline: 2px solid white;
+        }
+        video {
+            margin-top: 20px;
+            border: 2px solid white;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Blind People Voice Sensor Direction Instruction</h1>
+    <p>Press the button and say a command (e.g., "Scan Surroundings")</p>
+    <button id="startButton" onclick="startListening()" role="button" aria-label="Start Voice Recognition">
+        Start Voice Recognition
+    </button>
+    <p id="output"></p>
+    <video id="camera" width="300" height="200" autoplay></video>
+
+    <script>
+        let model;
+        let scanning = false;
+
+        async function loadModel() {
+            if (!model) {
+                model = await cocoSsd.load();
+                console.log("Model Loaded");
+            }
+        }
+
+        async function detectObjects() {
+            if (!model || !scanning) return;
+            
+            const video = document.getElementById('camera');
+            if (!video.srcObject) {
+                speak("Camera not available.");
+                return;
+            }
+
+            const predictions = await model.detect(video);
+            const objects = predictions.filter(p => p.class !== "person");
+            const persons = predictions.filter(p => p.class === "person");
+            
+            let outputText = "";
+            if (objects.length > 0) {
+                outputText += objects.map(p => {
+                    let steps = getDistanceInSteps(p.score);
+                    let direction = getDirection(p.bbox, video.width);
+                    return `${getDetailedObjectName(p.class)} ${direction}, ${steps} steps ahead.`;
+                }).join(" ");
+            }
+            
+            if (persons.length > 0) {
+                if (outputText) outputText += " ";
+                outputText += persons.map(p => {
+                    let steps = getDistanceInSteps(p.score);
+                    let direction = getDirection(p.bbox, video.width);
+                    return `Person ${direction}, ${steps} steps ahead.`;
+                }).join(" ");
+            }
+            
+            // Special detection for stairways and elevators
+            if (objects.some(p => p.class === "stairs")) {
+                outputText += " Stairway ahead, proceed carefully.";
+            }
+            if (objects.some(p => p.class === "elevator")) {
+                let floor = getElevatorFloor();
+                outputText += ` Elevator detected. You are on floor ${floor}.`;
+            }
+            
+            if (outputText) {
+                document.getElementById('output').textContent = outputText;
+                speak(outputText);
+            } else {
+                document.getElementById('output').textContent = "Path clear ahead.";
+                speak("Path clear ahead.");
+            }
+
+            setTimeout(detectObjects, 5000); // Delay of 5 seconds before scanning again
+        }
+
+        function getDetailedObjectName(objectClass) {
+            const detailedNames = {
+                "chair": "a chair",
+                "table": "a table",
+                "bottle": "a bottle",
+                "cup": "a cup",
+                "backpack": "a backpack",
+                "laptop": "a laptop",
+                "cell phone": "a cell phone",
+                "book": "a book",
+                "tv": "a television",
+                "keyboard": "a keyboard",
+                "remote": "a remote control",
+                "mouse": "a computer mouse",
+                "bench": "a bench",
+                "sofa": "a sofa",
+                "stairs": "a stairway",
+                "elevator": "an elevator"
+            };
+            return detailedNames[objectClass] || `an object (${objectClass})`;
+        }
+
+        function getDistanceInSteps(score) {
+            let distance = 1 / score; // Approximate inverse confidence score as distance
+            let steps = Math.max(1, Math.round(distance * 2)); // Convert to steps
+            return steps;
+        }
+
+        function getDirection(bbox, videoWidth) {
+            const [x] = bbox;
+            if (x < videoWidth / 3) return "on your left";
+            if (x > (2 * videoWidth) / 3) return "on your right";
+            return "ahead";
+        }
+
+        function getElevatorFloor() {
+            // Placeholder function: Ideally, this would be determined by sensors or building API
+            return Math.floor(Math.random() * 10) + 1; // Random floor for simulation
+        }
+
+        function speak(text) {
+            const speech = new SpeechSynthesisUtterance(text);
+            window.speechSynthesis.speak(speech);
+        }
+
+        function startListening() {
+            const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+            recognition.lang = 'en-US';
+            recognition.start();
+            document.getElementById('output').textContent = "Listening...";
+
+            recognition.onresult = function(event) {
+                const command = event.results[0][0].transcript.toLowerCase();
+                document.getElementById('output').textContent = `You said: "${command}"`;
+                processCommand(command);
+            };
+
+            recognition.onerror = function(event) {
+                speak("Try again.");
+                document.getElementById('output').textContent = "Error: Unable to recognize speech.";
+            };
+        }
+
+        function processCommand(command) {
+            if (command.includes("scan surroundings")) {
+                speak("Scanning.");
+                scanning = true;
+                detectObjects();
+            } else if (command.includes("stop scanning")) {
+                speak("Stopped.");
+                scanning = false;
+            } else {
+                speak("Command not recognized.");
+            }
+        }
+
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+                document.getElementById('camera').srcObject = stream;
+            })
+            .catch(error => {
+                console.error("Camera access denied", error);
+                document.getElementById('output').textContent = "Camera access denied.";
+                speak("Camera access denied.");
+            });
+
+        loadModel();
+    </script>
+</body>
+</html>
